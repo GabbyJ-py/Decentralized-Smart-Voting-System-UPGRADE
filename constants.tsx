@@ -13,6 +13,7 @@ export const CANDIDATES: Candidate[] = [
 
 export const CONSTITUENCY = "Cyber District 01";
 
+// Added missing DEFAULT_ADMIN constant
 export const DEFAULT_ADMIN: AdminCredentials = {
   username: 'admin',
   password: 'password123'

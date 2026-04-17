@@ -19,6 +19,9 @@ const VotingPanel: React.FC<{ voter: Voter; onVoteCast: () => void }> = ({ voter
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'confirming' | 'broadcasting' | 'success'>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [voteTimestamp, setVoteTimestamp] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(30);
+  const [autoRedirect, setAutoRedirect] = useState(true);
 
   const handleVote = async () => {
     if (selectedId === null) return;
@@ -30,11 +33,11 @@ const VotingPanel: React.FC<{ voter: Voter; onVoteCast: () => void }> = ({ voter
       const result = await api.castVote(voter.email, selectedId);
       
       if (result.success) {
-        setTxHash(result.txHash || '0x0000000000000000000000000000000000000000');
+        setTxHash(result.txHash || 'Transaction hash not available');
+        setVoteTimestamp(new Date().toLocaleString()); // Capture exact moment
         setStatus('success');
-        setTimeout(() => {
-          onVoteCast();
-        }, 5000);
+        setCountdown(30);
+        setAutoRedirect(true);
       } else {
         alert(result.message);
         setStatus('idle');
@@ -46,6 +49,18 @@ const VotingPanel: React.FC<{ voter: Voter; onVoteCast: () => void }> = ({ voter
       setLoading(false);
     }
   };
+
+  // Countdown timer effect
+  React.useEffect(() => {
+    if (status === 'success' && autoRedirect && countdown > 0) {
+      const timer = setTimeout(() => {
+        setCountdown(countdown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (status === 'success' && autoRedirect && countdown === 0) {
+      onVoteCast();
+    }
+  }, [status, countdown, autoRedirect, onVoteCast]);
 
   if (status === 'success') {
     return (
@@ -73,7 +88,7 @@ const VotingPanel: React.FC<{ voter: Voter; onVoteCast: () => void }> = ({ voter
             <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4">
               <div>
                 <p className="text-[8px] font-bold uppercase text-blue-200/50">Timestamp</p>
-                <p className="text-[10px] font-bold">{new Date().toLocaleString()}</p>
+                <p className="text-[10px] font-bold">{voteTimestamp}</p>
               </div>
               <div>
                 <p className="text-[8px] font-bold uppercase text-blue-200/50">Status</p>
@@ -83,7 +98,72 @@ const VotingPanel: React.FC<{ voter: Voter; onVoteCast: () => void }> = ({ voter
           </div>
         </div>
 
-        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest animate-pulse">Redirecting to main portal in 5 seconds...</p>
+        <button 
+          onClick={async () => {
+            try {
+              const response = await fetch('http://localhost:5000/api/generate-receipt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  voterId: voter.voterId,
+                  voterName: voter.name,
+                  candidateName: CANDIDATES.find(c => c.id === selectedId)?.name || 'Unknown',
+                  txHash: txHash,
+                  timestamp: Math.floor(Date.now() / 1000)
+                })
+              });
+              
+              if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `voting_receipt_${voter.voterId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+              } else {
+                alert('Failed to generate receipt');
+              }
+            } catch (error) {
+              console.error('Receipt download error:', error);
+              alert('Failed to download receipt');
+            }
+          }}
+          className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-3"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Download Receipt (PDF)
+        </button>
+
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setAutoRedirect(false)}
+            className="flex-1 bg-slate-100 text-slate-700 py-3 rounded-2xl font-bold hover:bg-slate-200 transition"
+          >
+            Stay on Page
+          </button>
+          <button 
+            onClick={() => onVoteCast()}
+            className="flex-1 bg-green-600 text-white py-3 rounded-2xl font-bold hover:bg-green-700 transition"
+          >
+            Return to Portal
+          </button>
+        </div>
+
+        {autoRedirect && (
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest animate-pulse">
+            Redirecting to main portal in {countdown} seconds...
+          </p>
+        )}
+        {!autoRedirect && (
+          <p className="text-xs text-green-600 font-bold uppercase tracking-widest">
+            Auto-redirect disabled. Click "Return to Portal" when ready.
+          </p>
+        )}
       </div>
     );
   }

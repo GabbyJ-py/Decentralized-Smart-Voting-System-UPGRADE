@@ -66,12 +66,6 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, isAuthenticated, 
               icon={<Search size={18} />}
               label="Search Registry" 
             />
-            <NavButton 
-              active={currentView === AppView.ADMIN} 
-              onClick={() => setView(AppView.ADMIN)}
-              icon={<ShieldCheck size={18} />}
-              label="Admin Console" 
-            />
           </nav>
 
           <div className="flex items-center gap-3">
@@ -90,10 +84,11 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, isAuthenticated, 
               </div>
             ) : (
               <button 
-                onClick={() => setView(AppView.AUTHENTICATION)}
+                onClick={() => setView(AppView.ADMIN)}
                 className="bg-[#053c6d] hover:bg-[#085091] text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-blue-900/10 flex items-center gap-2"
               >
-                Authenticate Identity <ChevronDown size={16} />
+                <ShieldCheck size={18} />
+                Admin Console
               </button>
             )}
           </div>

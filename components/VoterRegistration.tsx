@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { api } from '../services/api';
-// Added missing Loader2 import to fix "Cannot find name 'Loader2'" error
-import { UserPlus, Camera, Upload, ShieldCheck, AlertCircle, Phone, User, Calendar, Mail, Fingerprint, Image as ImageIcon, CheckCircle2, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
+import { UserPlus, Camera, Upload, ShieldCheck, AlertCircle, Phone, User, Calendar, Mail, Fingerprint, CheckCircle2, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
 
 const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
-  const [regPhase, setRegPhase] = useState<'AADHAAR_VERIFY' | 'FORM'>('AADHAAR_VERIFY');
+  const [regPhase, setRegPhase] = useState<'PHONE_ENTRY' | 'OTP_VERIFY' | 'AADHAAR_VERIFY' | 'FORM'>('PHONE_ENTRY');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [maskedPhone, setMaskedPhone] = useState('');
   const [formData, setFormData] = useState({ 
     name: '', 
     age: '', 
@@ -21,14 +23,52 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Function to download voter ID card
+  const handleDownloadEPIC = async () => {
+    if (!successId) return;
+    
+    try {
+      const response = await fetch('http://localhost:5000/api/generate-voter-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          voterId: successId,
+          name: formData.name,
+          age: formData.age,
+          gender: formData.gender,
+          aadhaar: formData.aadhaar
+        })
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `voter_card_${successId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        alert('Failed to generate voter ID card');
+      }
+    } catch (error) {
+      console.error('Voter card download error:', error);
+      alert('Failed to download voter ID card');
+    }
+  };
+
   // Validation functions
   const validateEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // Only Gmail addresses allowed
+    const emailRegex = /^[^\s@]+@gmail\.com$/i;
     return emailRegex.test(email);
   };
 
   const validatePhone = (phone: string): boolean => {
-    const phoneRegex = /^[+]?[\d\s-]{10,15}$/;
+    // Only 10 digits allowed
+    const phoneRegex = /^\d{10}$/;
     return phoneRegex.test(phone.trim());
   };
 
@@ -60,6 +100,72 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
     }
 
     return parts.join('-');
+  };
+
+  // Handle phone number OTP request
+  const handleRequestOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (phoneNumber.length !== 10 || !/^\d{10}$/.test(phoneNumber)) {
+      setError('Please enter a valid 10-digit phone number');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    const result = await api.requestRegistrationOtp(phoneNumber);
+    
+    if (result.success) {
+      setMaskedPhone(result.maskedPhone || '');
+      setRegPhase('OTP_VERIFY');
+    } else {
+      setError(result.message);
+    }
+    
+    setLoading(false);
+  };
+
+  // Handle OTP verification
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (otpInput.length !== 6 || !/^\d{6}$/.test(otpInput)) {
+      setError('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    const result = await api.verifyRegistrationOtp(phoneNumber, otpInput);
+    
+    if (result.success) {
+      setFormData({ ...formData, phone: phoneNumber });
+      setRegPhase('AADHAAR_VERIFY');
+    } else {
+      setError(result.message);
+    }
+    
+    setLoading(false);
+  };
+
+  // Resend OTP
+  const handleResendOtp = async () => {
+    setOtpInput('');
+    setError('');
+    setLoading(true);
+
+    const result = await api.requestRegistrationOtp(phoneNumber);
+    
+    if (result.success) {
+      setError('');
+      alert('OTP resent successfully!');
+    } else {
+      setError(result.message);
+    }
+    
+    setLoading(false);
   };
 
 
@@ -138,7 +244,7 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
     }
     
     if (!validatePhone(formData.phone)) {
-      errors.phone = 'Please enter a valid phone number (10-15 digits)';
+      errors.phone = 'Phone number must be exactly 10 digits';
     }
     
     if (!validateAadhaar(formData.aadhaar)) {
@@ -190,8 +296,7 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
           </div>
           <div className="relative z-10 text-left space-y-4">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2 text-blue-200">Electronic Photo Identity Card (EPIC) NO.</p>
-              <p className="text-5xl font-mono font-black tracking-tighter text-[#ff9933]">{successId}</p>
+              <p className="text-lg font-semibold text-white">A digital confirmation has been sent to your registered email address.</p>
             </div>
             <div className="flex justify-between border-t border-white/10 pt-4">
               <div>
@@ -207,7 +312,10 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <button className="bg-slate-50 text-slate-700 py-4 rounded-xl font-bold border border-slate-200 hover:bg-slate-100 transition flex items-center justify-center gap-2">
+          <button 
+            onClick={handleDownloadEPIC}
+            className="bg-slate-50 text-slate-700 py-4 rounded-xl font-bold border border-slate-200 hover:bg-slate-100 transition flex items-center justify-center gap-2"
+          >
             <Upload size={18} /> Download EPIC
           </button>
           <button onClick={onComplete} className="bg-[#053c6d] text-white py-4 rounded-xl font-bold hover:bg-[#085091] transition shadow-lg shadow-blue-900/20">
@@ -231,7 +339,101 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
           </div>
         </div>
 
-        {regPhase === 'AADHAAR_VERIFY' ? (
+        {regPhase === 'PHONE_ENTRY' ? (
+          <div className="p-12 md:p-20 space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 text-center">
+            <div className="max-w-md mx-auto space-y-8">
+              <div className="w-20 h-20 bg-green-50 rounded-3xl flex items-center justify-center mx-auto text-green-600 border border-green-100 shadow-inner">
+                <Phone size={40} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-3xl font-black text-[#053c6d]">Phone Verification</h3>
+                <p className="text-slate-500 font-medium text-sm leading-relaxed">Enter your 10-digit mobile number to receive a verification code.</p>
+              </div>
+
+              <form onSubmit={handleRequestOtp} className="space-y-6">
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none text-slate-300 group-focus-within:text-[#053c6d] transition-colors">
+                    <Phone size={22} />
+                  </div>
+                  <input 
+                    required
+                    autoFocus
+                    type="tel"
+                    maxLength={10}
+                    className="w-full pl-16 pr-8 py-6 bg-slate-50 border-2 border-slate-100 rounded-3xl focus:bg-white focus:border-[#053c6d] outline-none text-xl font-bold transition-all placeholder:text-slate-300 shadow-sm"
+                    placeholder="9876543210"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                  />
+                </div>
+                <button 
+                  disabled={loading || phoneNumber.length !== 10}
+                  className="w-full bg-[#053c6d] text-white py-6 rounded-3xl font-black text-xl hover:bg-[#085091] transition shadow-2xl shadow-blue-900/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 group"
+                >
+                  {loading ? <Loader2 className="animate-spin" /> : <>Send OTP <ArrowRight className="group-hover:translate-x-1 transition-transform" /></>}
+                </button>
+              </form>
+
+              {error && (
+                <div className="p-5 bg-red-50 border border-red-100 rounded-2xl flex gap-4 items-center text-left animate-in zoom-in-95">
+                  <AlertCircle className="text-red-600 shrink-0" size={24} />
+                  <p className="text-red-700 text-sm font-bold leading-tight">{error}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : regPhase === 'OTP_VERIFY' ? (
+          <div className="p-12 md:p-20 space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 text-center">
+            <div className="max-w-md mx-auto space-y-8">
+              <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mx-auto text-[#053c6d] border border-blue-100 shadow-inner">
+                <ShieldCheck size={40} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-3xl font-black text-[#053c6d]">Enter OTP</h3>
+                <p className="text-slate-500 font-medium text-sm leading-relaxed">
+                  We've sent a 6-digit code to {maskedPhone}
+                </p>
+              </div>
+
+              <form onSubmit={handleVerifyOtp} className="space-y-6">
+                <div className="relative group">
+                  <input 
+                    required
+                    autoFocus
+                    type="text"
+                    maxLength={6}
+                    className="w-full px-8 py-6 bg-slate-50 border-2 border-slate-100 rounded-3xl focus:bg-white focus:border-[#053c6d] outline-none text-2xl font-bold text-center transition-all placeholder:text-slate-300 shadow-sm tracking-widest"
+                    placeholder="000000"
+                    value={otpInput}
+                    onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ''))}
+                  />
+                </div>
+                <button 
+                  disabled={loading || otpInput.length !== 6}
+                  className="w-full bg-[#053c6d] text-white py-6 rounded-3xl font-black text-xl hover:bg-[#085091] transition shadow-2xl shadow-blue-900/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 group"
+                >
+                  {loading ? <Loader2 className="animate-spin" /> : <>Verify OTP <CheckCircle2 className="group-hover:scale-110 transition-transform" /></>}
+                </button>
+                
+                <button 
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={loading}
+                  className="w-full text-[#053c6d] py-3 rounded-xl font-bold hover:bg-blue-50 transition disabled:opacity-50"
+                >
+                  Resend OTP
+                </button>
+              </form>
+
+              {error && (
+                <div className="p-5 bg-red-50 border border-red-100 rounded-2xl flex gap-4 items-center text-left animate-in zoom-in-95">
+                  <AlertCircle className="text-red-600 shrink-0" size={24} />
+                  <p className="text-red-700 text-sm font-bold leading-tight">{error}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : regPhase === 'AADHAAR_VERIFY' ? (
           <div className="p-12 md:p-20 space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 text-center">
             <div className="max-w-md mx-auto space-y-8">
               <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mx-auto text-[#053c6d] border border-blue-100 shadow-inner">
@@ -355,6 +557,7 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
                   onChange={(v: string) => setFormData({...formData, phone: v})} 
                   placeholder="+91 00000 00000"
                   error={validationErrors.phone}
+                  disabled={true}
                 />
               </div>
 
@@ -475,12 +678,12 @@ const VoterRegistration: React.FC<{ onComplete: () => void }> = ({ onComplete })
   );
 };
 
-const Input = ({ label, icon, type = "text", value, onChange, placeholder, maxLength, error }: any) => (
+const Input = ({ label, icon, type = "text", value, onChange, placeholder, maxLength, error, disabled = false }: any) => (
   <div className="space-y-2">
     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">{label}</label>
     <div className="relative group">
       <div className={`absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none transition-colors ${
-        error ? 'text-red-500' : 'text-slate-400 group-focus-within:text-[#053c6d]'
+        error ? 'text-red-500' : disabled ? 'text-green-500' : 'text-slate-400 group-focus-within:text-[#053c6d]'
       }`}>
         {icon}
       </div>
@@ -488,8 +691,11 @@ const Input = ({ label, icon, type = "text", value, onChange, placeholder, maxLe
         required 
         type={type} 
         maxLength={maxLength}
+        disabled={disabled}
         className={`w-full pl-12 pr-5 py-4 border-2 rounded-2xl outline-none font-bold text-slate-700 transition-all placeholder:text-slate-300 ${
-          error 
+          disabled
+            ? 'bg-green-50 border-green-200 cursor-not-allowed'
+            : error 
             ? 'bg-red-50 border-red-300 focus:border-red-500' 
             : 'bg-slate-50 border-slate-100 focus:bg-white focus:border-[#053c6d]'
         }`}
@@ -501,6 +707,11 @@ const Input = ({ label, icon, type = "text", value, onChange, placeholder, maxLe
     {error && (
       <p className="text-red-600 text-xs font-bold ml-1 flex items-center gap-1 animate-in slide-in-from-top-1">
         <AlertCircle size={12} /> {error}
+      </p>
+    )}
+    {disabled && (
+      <p className="text-green-600 text-xs font-bold ml-1 flex items-center gap-1">
+        <CheckCircle2 size={12} /> Verified
       </p>
     )}
   </div>

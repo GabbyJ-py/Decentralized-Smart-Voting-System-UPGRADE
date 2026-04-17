@@ -1,157 +1,152 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/**
- * @title VotingContract
- * @dev Decentralized voting system with double-vote prevention
- */
 contract VotingContract {
-    
-    // Candidate structure
     struct Candidate {
         uint256 id;
         string name;
         uint256 voteCount;
     }
-    
-    // State variables
-    address public admin;
-    uint256 public candidatesCount;
-    
-    // Mappings
+
+    struct VoteRecord {
+        string voterHash;
+        uint256 candidateId;
+        uint256 timestamp;
+        uint256 blockNumber;
+    }
+
     mapping(uint256 => Candidate) public candidates;
     mapping(string => bool) public hasVoted;
+    mapping(string => uint256) public voteTimestamp;
+    uint256 public candidatesCount;
     
-    // Events
+    // Voting period control
+    address public admin;
+    uint256 public votingStart;
+    uint256 public votingEnd;
+    bool public votingActive;
+    bool public resultsPublished;
+    
+    // Enhanced tracking
+    uint256 public totalVoters;
+    VoteRecord[] public voteRecords;
+
     event VoteCast(
         string indexed voterHash,
         uint256 indexed candidateId,
         uint256 timestamp
     );
     
-    event CandidateAdded(
-        uint256 indexed candidateId,
-        string name
-    );
-    
-    // Modifiers
+    event VotingStarted(uint256 startTime, uint256 endTime);
+    event VotingEnded(uint256 endTime);
+    event VoterRecorded(string indexed voterHash, uint256 timestamp, uint256 blockNumber);
+    event ResultsPublished(uint256 timestamp);
+
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin can perform this action");
         _;
     }
-    
-    modifier validCandidate(uint256 _candidateId) {
-        require(_candidateId > 0 && _candidateId <= candidatesCount, "Invalid candidate ID");
+
+    modifier votingOpen() {
+        require(votingActive, "Voting is not active");
+        require(block.timestamp >= votingStart, "Voting has not started yet");
+        require(block.timestamp <= votingEnd, "Voting has ended");
         _;
     }
-    
-    /**
-     * @dev Constructor - Initialize contract with candidates
-     * @param _candidateNames Array of candidate names
-     */
+
     constructor(string[] memory _candidateNames) {
         admin = msg.sender;
+        votingActive = false; // Voting starts disabled
+        resultsPublished = false; // Results start unpublished
         
-        // Add all candidates
         for (uint256 i = 0; i < _candidateNames.length; i++) {
             candidatesCount++;
-            candidates[candidatesCount] = Candidate(candidatesCount, _candidateNames[i], 0);
-            emit CandidateAdded(candidatesCount, _candidateNames[i]);
+            candidates[candidatesCount] = Candidate(
+                candidatesCount,
+                _candidateNames[i],
+                0
+            );
         }
     }
-    
-    /**
-     * @dev Cast a vote for a candidate
-     * @param _voterHash Unique hash of the voter (prevents double voting)
-     * @param _candidateId ID of the candidate to vote for
-     */
-    function castVote(string memory _voterHash, uint256 _candidateId) 
-        public 
-        validCandidate(_candidateId) 
-    {
-        // Check if voter has already voted
-        require(!hasVoted[_voterHash], "Double-voting detected: This voter has already cast a ballot");
+
+    function startVoting(uint256 durationInSeconds) public onlyAdmin {
+        require(!votingActive, "Voting is already active");
+        votingStart = block.timestamp;
+        votingEnd = block.timestamp + durationInSeconds;
+        votingActive = true;
         
-        // Mark voter as having voted
+        emit VotingStarted(votingStart, votingEnd);
+    }
+
+    function endVoting() public onlyAdmin {
+        require(votingActive, "Voting is not active");
+        votingActive = false;
+        
+        emit VotingEnded(block.timestamp);
+    }
+
+    function extendVoting(uint256 additionalSeconds) public onlyAdmin {
+        require(votingActive, "Voting is not active");
+        votingEnd += additionalSeconds;
+    }
+
+    function castVote(string memory _voterHash, uint256 _candidateId) public votingOpen {
+        require(!hasVoted[_voterHash], "Already voted");
+        require(_candidateId > 0 && _candidateId <= candidatesCount, "Invalid candidate");
+
+        // Mark as voted
         hasVoted[_voterHash] = true;
+        
+        // Record vote timestamp (Enhancement #3)
+        voteTimestamp[_voterHash] = block.timestamp;
+        
+        // Increment total voters (Enhancement #1)
+        totalVoters++;
+        
+        // Store detailed vote record (Enhancement #4)
+        voteRecords.push(VoteRecord({
+            voterHash: _voterHash,
+            candidateId: _candidateId,
+            timestamp: block.timestamp,
+            blockNumber: block.number
+        }));
         
         // Increment candidate vote count
         candidates[_candidateId].voteCount++;
-        
-        // Emit event for transparency
+
         emit VoteCast(_voterHash, _candidateId, block.timestamp);
+        emit VoterRecorded(_voterHash, block.timestamp, block.number);
     }
     
-    /**
-     * @dev Get candidate details
-     * @param _candidateId ID of the candidate
-     * @return id Candidate ID
-     * @return name Candidate name
-     * @return voteCount Number of votes received
-     */
-    function getCandidate(uint256 _candidateId) 
-        public 
-        view 
-        validCandidate(_candidateId)
-        returns (uint256 id, string memory name, uint256 voteCount) 
-    {
-        Candidate memory c = candidates[_candidateId];
-        return (c.id, c.name, c.voteCount);
+    function getVotingStatus() public view returns (bool active, uint256 start, uint256 end, uint256 currentTime) {
+        return (votingActive, votingStart, votingEnd, block.timestamp);
     }
     
-    /**
-     * @dev Get total number of candidates
-     * @return Total candidate count
-     */
-    function getCandidatesCount() public view returns (uint256) {
-        return candidatesCount;
+    function getTotalVoteRecords() public view returns (uint256) {
+        return voteRecords.length;
     }
     
-    /**
-     * @dev Check if a voter has already voted
-     * @param _voterHash Unique hash of the voter
-     * @return Boolean indicating if voter has voted
-     */
-    function checkHasVoted(string memory _voterHash) public view returns (bool) {
-        return hasVoted[_voterHash];
+    function getVoteRecord(uint256 index) public view returns (string memory voterHash, uint256 candidateId, uint256 timestamp, uint256 blockNumber) {
+        require(index < voteRecords.length, "Index out of bounds");
+        VoteRecord memory record = voteRecords[index];
+        return (record.voterHash, record.candidateId, record.timestamp, record.blockNumber);
     }
     
-    /**
-     * @dev Get all results
-     * @return ids Array of candidate IDs
-     * @return names Array of candidate names
-     * @return voteCounts Array of vote counts
-     */
-    function getResults() 
-        public 
-        view 
-        returns (
-            uint256[] memory ids,
-            string[] memory names,
-            uint256[] memory voteCounts
-        ) 
-    {
-        ids = new uint256[](candidatesCount);
-        names = new string[](candidatesCount);
-        voteCounts = new uint256[](candidatesCount);
+    function getVoterTimestamp(string memory _voterHash) public view returns (uint256) {
+        require(hasVoted[_voterHash], "Voter has not voted");
+        return voteTimestamp[_voterHash];
+    }
+    
+    function publishResults() public onlyAdmin {
+        require(!votingActive, "Cannot publish results while voting is active");
+        require(!resultsPublished, "Results already published");
+        resultsPublished = true;
         
-        for (uint256 i = 1; i <= candidatesCount; i++) {
-            Candidate memory c = candidates[i];
-            ids[i - 1] = c.id;
-            names[i - 1] = c.name;
-            voteCounts[i - 1] = c.voteCount;
-        }
-        
-        return (ids, names, voteCounts);
+        emit ResultsPublished(block.timestamp);
     }
     
-    /**
-     * @dev Add a new candidate (admin only)
-     * @param _name Name of the candidate
-     */
-    function addCandidate(string memory _name) public onlyAdmin {
-        candidatesCount++;
-        candidates[candidatesCount] = Candidate(candidatesCount, _name, 0);
-        emit CandidateAdded(candidatesCount, _name);
+    function unpublishResults() public onlyAdmin {
+        require(resultsPublished, "Results are not published");
+        resultsPublished = false;
     }
 }

@@ -4,12 +4,10 @@ import { Voter } from '../types';
 import { Camera, ShieldCheck, AlertTriangle, Scan, Lock, User, CheckCircle2, ArrowRight, Fingerprint, Loader2, ShieldAlert, RefreshCw, ChevronRight } from 'lucide-react';
 
 type AuthStep = 'LOOKUP' | 'CAMERA_INIT' | 'PRE_LIVENESS' | 'PREPARING' | 'LIVENESS' | 'ANALYZING' | 'RESULT';
-type Challenge = 'BLINK' | 'TURN_LEFT' | 'TURN_RIGHT';
+type Challenge = 'BLINK';
 
 const CHALLENGES: { type: Challenge; label: string; instruction: string }[] = [
-  { type: 'BLINK', label: 'Blink Eyes', instruction: 'Perform a natural blink to verify liveness.' },
-  { type: 'TURN_LEFT', label: 'Turn Head Left', instruction: 'Slowly rotate your head 45 degrees to the left.' },
-  { type: 'TURN_RIGHT', label: 'Turn Head Right', instruction: 'Slowly rotate your head 45 degrees to the right.' }
+  { type: 'BLINK', label: 'Liveness Verification', instruction: 'First 5 seconds: Blink naturally. Next 3 seconds: Stay completely still for face matching.' }
 ];
 
 const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> = ({ onAuthSuccess }) => {
@@ -18,11 +16,13 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
   const [idType, setIdType] = useState<'VOTER_ID' | 'AADHAAR'>('VOTER_ID');
   const [voter, setVoter] = useState<Voter | null>(null);
   const [currentChallengeIdx, setCurrentChallengeIdx] = useState(0);
-  const [timer, setTimer] = useState(5);
+  const [timer, setTimer] = useState(10);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
   const [authStatus, setAuthStatus] = useState<'SUCCESS' | 'FAIL' | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [livenessFrames, setLivenessFrames] = useState<string[]>([]);  // Store liveness frames
+  const [livenessResult, setLivenessResult] = useState<any>(null);  // Store liveness verification result
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -90,7 +90,7 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
       case 'CAMERA_INIT':
       case 'PRE_LIVENESS': return 35;
       case 'PREPARING': return 40;
-      case 'LIVENESS': return 45 + (currentChallengeIdx * 15);
+      case 'LIVENESS': return 70;  // Single challenge at 70%
       case 'ANALYZING': return 95;
       case 'RESULT': return 100;
       default: return 0;
@@ -152,17 +152,12 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
     if (step === 'LIVENESS' && timer > 0) {
       interval = setInterval(() => setTimer((t: number) => t - 1), 1000);
     } else if (step === 'LIVENESS' && timer === 0) {
-      if (currentChallengeIdx < CHALLENGES.length - 1) {
-        setCurrentChallengeIdx((i: number) => i + 1);
-        setTimer(5);
-      } else {
-        // All challenges complete - proceed to analysis
-        setStep('ANALYZING');
-        runAIEngine();
-      }
+      // Challenge complete - proceed to analysis
+      setStep('ANALYZING');
+      runAIEngine();
     }
     return () => clearInterval(interval);
-  }, [step, timer, currentChallengeIdx]);
+  }, [step, timer]);
 
   // Simulated AI Engine Run
   const runAIEngine = async () => {
@@ -180,10 +175,12 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
     }
 
     console.log('[AUTH] Using captured image for verification...');
+    console.log('[AUTH] Liveness frames:', livenessFrames.length);
+    
     const result = await api.authenticateVoter(
       voter!.voterId,
       capturedImage,
-      [] // Empty liveness frames array
+      livenessFrames  // Pass liveness frames to API
     );
 
     stopCamera();
@@ -191,10 +188,19 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
 
     if (result.success) {
       setAuthStatus('SUCCESS');
+      setLivenessResult(result.liveness);  // Store liveness result
       setTimeout(() => onAuthSuccess(voter!), 2000);
     } else {
       setAuthStatus('FAIL');
-      setError(result.message || 'Authentication failed');
+      setLivenessResult(result.liveness);  // Store liveness result even on failure
+      // Check if it's a rate limit error
+      if (result.message?.includes('Too many requests') || result.message?.includes('rate limit')) {
+        setError('⏱️ Too many authentication attempts. Please wait a few minutes and try again.');
+      } else if (result.message?.includes('Liveness')) {
+        setError(result.message || 'Liveness verification failed. Please ensure you are a real person.');
+      } else {
+        setError(result.message || 'Authentication failed');
+      }
     }
   };
 
@@ -202,35 +208,51 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
   const startLiveness = () => {
     // Show preparing state
     setStep('PREPARING');
-    console.log('[LIVENESS] Preparing for liveness challenges...');
+    console.log('[LIVENESS] Preparing for liveness challenge...');
     
-    // Wait 2.5 seconds before starting challenges (preparation time)
+    // Wait 2.5 seconds before starting challenge (preparation time)
     setTimeout(() => {
       setCurrentChallengeIdx(0);
-      setTimer(5);
+      setTimer(10);
       setStep('LIVENESS');
-      console.log('[LIVENESS] First challenge starting now');
+      console.log('[LIVENESS] Blink challenge starting now');
       
-      // CAPTURE IMAGE during first challenge (after 1 second into the challenge)
+      // CAPTURE LIVENESS FRAMES during challenge
+      const frames: string[] = [];
+      let frameCount = 0;
+      const maxFrames = 15;  // Capture 15 frames
+      const frameInterval = 200;  // Every 200ms (5 FPS)
+      
+      const captureInterval = setInterval(() => {
+        if (frameCount >= maxFrames) {
+          clearInterval(captureInterval);
+          console.log(`[LIVENESS] Captured ${frames.length} frames for liveness detection`);
+          setLivenessFrames(frames);
+          return;
+        }
+        
+        try {
+          const frame = captureLiveImage();
+          frames.push(frame);
+          frameCount++;
+          console.log(`[LIVENESS] Frame ${frameCount}/${maxFrames} captured`);
+        } catch (error) {
+          console.error('[LIVENESS] Error capturing frame:', error);
+        }
+      }, frameInterval);
+      
+      // Also capture the main authentication image (after 1 second)
       setTimeout(() => {
-        console.log('[CAPTURE] Capturing image during first challenge...');
+        console.log('[CAPTURE] Capturing main authentication image...');
         const liveImage = captureLiveImage();
         setCapturedImage(liveImage);
-        console.log('[CAPTURE] Image captured successfully during liveness');
+        console.log('[CAPTURE] Main image captured successfully');
       }, 1000);
     }, 2500);
   };
 
   return (
     <div className="max-w-6xl mx-auto py-6 px-4">
-      {/* Master Progress Bar */}
-      <div className="w-full h-1.5 bg-slate-200 rounded-full mb-10 overflow-hidden">
-        <div 
-          className="h-full bg-blue-600 transition-all duration-700 ease-out"
-          style={{ width: `${getProgress()}%` }}
-        />
-      </div>
-
       {/* Step Header */}
       <div className="flex items-center justify-between mb-10 border-b border-slate-200 pb-6">
         <div className="flex items-center gap-4">
@@ -358,7 +380,17 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                     <span className="text-[9px] font-bold text-slate-300">MODG-IMG-DATA</span>
                   </div>
                   <div className="aspect-[4/5] bg-white rounded-[2.5rem] border-4 border-white shadow-xl overflow-hidden ring-1 ring-slate-200 relative">
-                    <img src={voter?.faceEmbedding} className="w-full h-full object-cover grayscale opacity-50" />
+                    {voter?.photoPath ? (
+                      <img 
+                        src={`http://localhost:5000/${voter.photoPath}`} 
+                        alt="Registered photo"
+                        className="w-full h-full object-cover" 
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-slate-100 flex items-center justify-center">
+                        <User size={48} className="text-slate-300" />
+                      </div>
+                    )}
                     <div className="absolute inset-0 bg-blue-900/5 pointer-events-none"></div>
                     <div className="absolute bottom-6 left-6 right-6 p-4 bg-black/60 backdrop-blur-md rounded-2xl border border-white/10">
                       <p className="text-white text-[10px] font-black uppercase tracking-widest mb-1 flex items-center gap-2">
@@ -398,8 +430,25 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                         <div className="bg-[#053c6d] p-5 rounded-full mb-6 shadow-2xl ring-4 ring-blue-500/20">
                           <Camera size={32} />
                         </div>
-                        <h5 className="text-xl font-black mb-3 uppercase tracking-tight">Camera Synchronized</h5>
-                        <p className="text-blue-100/70 text-[10px] font-bold mb-8 uppercase tracking-widest leading-relaxed max-w-[240px]">Identity verified in registry. Click ready to begin sequential liveness challenges.</p>
+                        <h5 className="text-2xl font-black mb-6 uppercase tracking-tight">INSTRUCTIONS</h5>
+                        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-8 max-w-sm border border-white/20">
+                          <div className="space-y-4 text-left">
+                            <div className="flex items-start gap-3">
+                              <div className="bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center font-black text-sm shrink-0">1</div>
+                              <div>
+                                <p className="text-white font-black text-base">Blink naturally</p>
+                                <p className="text-blue-200 text-sm">(First 5 seconds)</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-3">
+                              <div className="bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center font-black text-sm shrink-0">2</div>
+                              <div>
+                                <p className="text-white font-black text-base">Stay still for face match</p>
+                                <p className="text-green-200 text-sm">(Last 5 seconds)</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                         <button 
                           onClick={startLiveness}
                           className="bg-white text-[#053c6d] px-10 py-5 rounded-3xl font-black text-sm uppercase tracking-[0.2em] hover:bg-blue-50 transition shadow-[0_20px_40px_rgba(255,255,255,0.1)] active:scale-95 flex items-center gap-3 group"
@@ -409,16 +458,14 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                       </div>
                     )}
 
-                    {/* Preparing for Challenges */}
+                    {/* Preparing for Challenge */}
                     {step === 'PREPARING' && (
                       <div className="absolute inset-0 bg-blue-600/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white z-40 animate-in zoom-in-95">
                         <div className="bg-white text-blue-600 p-5 rounded-full mb-6 shadow-2xl animate-pulse">
                           <ShieldCheck size={48} />
                         </div>
-                        <h5 className="text-2xl font-black mb-3 uppercase tracking-tight">Preparing Challenges</h5>
-                        <p className="text-blue-100 text-sm font-bold mb-4">Get ready for liveness verification...</p>
-                        <p className="text-blue-200 text-xs">3 challenges will begin shortly</p>
-                        <div className="mt-6 w-48 h-1 bg-white/20 rounded-full overflow-hidden">
+                        <h5 className="text-3xl font-black uppercase tracking-tight">Preparing Verification</h5>
+                        <div className="mt-8 w-48 h-1 bg-white/20 rounded-full overflow-hidden">
                           <div className="h-full bg-white animate-[progress_2.5s_ease-out]" />
                         </div>
                       </div>
@@ -428,13 +475,26 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                     {step === 'LIVENESS' && (
                       <div className="absolute inset-x-8 top-12 bg-white/10 backdrop-blur-xl rounded-3xl p-6 border border-white/20 text-center animate-in slide-in-from-top-4">
                         <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-600 rounded-full text-[9px] font-black uppercase tracking-widest text-white mb-3">
-                          <RefreshCw size={10} className="animate-spin-slow" /> Challenge {currentChallengeIdx + 1} of 3
+                          <RefreshCw size={10} className="animate-spin-slow" /> Liveness Test
                         </div>
-                        <h5 className="text-white text-xl font-black tracking-tight">{CHALLENGES[currentChallengeIdx].label}</h5>
-                        <p className="text-blue-100/70 text-[10px] font-medium mt-1 leading-relaxed px-4">{CHALLENGES[currentChallengeIdx].instruction}</p>
+                        <h5 className="text-white text-xl font-black tracking-tight">{CHALLENGES[0].label}</h5>
+                        
+                        {/* Dynamic instruction based on timer */}
+                        {timer > 5 ? (
+                          <p className="text-blue-100 text-sm font-bold mt-2 leading-relaxed px-4 animate-pulse">
+                            Blink naturally to prove you're real
+                          </p>
+                        ) : (
+                          <p className="text-green-100 text-sm font-bold mt-2 leading-relaxed px-4 animate-pulse">
+                            Stay still - Face matching in progress
+                          </p>
+                        )}
                         
                         <div className="mt-6 flex flex-col items-center justify-center gap-2">
-                          <span className="text-white font-black text-4xl animate-pulse">{timer}</span>
+                          {/* Show countdown 5-1 for each phase */}
+                          <span className="text-white font-black text-4xl animate-pulse">
+                            {timer > 5 ? timer - 5 : timer}
+                          </span>
                           <span className="text-blue-200 text-[9px] font-black uppercase tracking-[0.3em]">Seconds Remaining</span>
                         </div>
                       </div>
@@ -474,6 +534,19 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                         </div>
                         <h4 className="font-black uppercase text-3xl tracking-tight">Identity Verified</h4>
                         <p className="text-green-100 text-[10px] font-bold mt-4 uppercase tracking-[0.2em] opacity-80">Access Granted to Immutable Ballot</p>
+                        
+                        {/* Liveness Status */}
+                        {livenessResult && (
+                          <div className="mt-6 p-4 bg-white/10 rounded-2xl border border-white/20 text-left w-full max-w-sm">
+                            <p className="text-[9px] font-black uppercase tracking-widest mb-2 text-green-200">Liveness Verification</p>
+                            <div className="space-y-1 text-xs">
+                              <p>✓ Blinks Detected: {livenessResult.blink_count || 0}</p>
+                              <p>✓ Frame Variation: {livenessResult.frame_variation || 0}</p>
+                              <p className="text-[10px] italic opacity-80 mt-2">{livenessResult.message}</p>
+                            </div>
+                          </div>
+                        )}
+                        
                         <div className="mt-10 p-4 bg-white/10 rounded-2xl border border-white/20 text-[9px] font-bold font-mono">
                            SESSION_AUTH_TOKEN: {Math.random().toString(36).toUpperCase().slice(2, 14)}
                         </div>
@@ -486,9 +559,22 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                           <AlertTriangle size={48} />
                         </div>
                         <h4 className="font-black uppercase text-2xl tracking-tight leading-tight">Biometric Rejection</h4>
-                        <p className="text-red-100 text-xs font-bold mt-4 px-6 leading-relaxed">DeepFace could not align the live liveness data with your registered registry profile.</p>
+                        <p className="text-red-100 text-xs font-bold mt-4 px-6 leading-relaxed">{error || 'DeepFace could not align the live liveness data with your registered registry profile.'}</p>
+                        
+                        {/* Liveness Status on Failure */}
+                        {livenessResult && !livenessResult.overall && (
+                          <div className="mt-6 p-4 bg-white/10 rounded-2xl border border-white/20 text-left w-full max-w-sm">
+                            <p className="text-[9px] font-black uppercase tracking-widest mb-2 text-red-200">Liveness Check Failed</p>
+                            <div className="space-y-1 text-xs">
+                              <p>✗ Blinks Detected: {livenessResult.blink_count || 0}</p>
+                              <p>✗ Frame Variation: {livenessResult.frame_variation || 0}</p>
+                              <p className="text-[10px] italic opacity-80 mt-2">{livenessResult.message}</p>
+                            </div>
+                          </div>
+                        )}
+                        
                         <button 
-                          onClick={() => { setStep('LOOKUP'); setVoter(null); setAuthStatus(null); }}
+                          onClick={() => { setStep('LOOKUP'); setVoter(null); setAuthStatus(null); setLivenessResult(null); setLivenessFrames([]); }}
                           className="mt-10 bg-white text-red-600 px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl"
                         >
                           Return to Lookup
@@ -527,21 +613,14 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
                   />
                   <InstructionItem 
                     number="3" 
-                    title="Look at Camera" 
-                    desc="Look directly at the lens, stay still" 
-                  />
-                  <InstructionItem 
-                    number="4" 
                     title="Remove Accessories" 
                     desc="Take off glasses, hats, or masks" 
                   />
-                </div>
-
-                <div className="mt-4 p-3 bg-white/10 backdrop-blur-sm rounded-lg border border-white/20">
-                  <p className="text-[10px] font-bold flex items-center gap-2">
-                    <AlertTriangle size={12} />
-                    <span>Use natural daylight for best results</span>
-                  </p>
+                  <InstructionItem 
+                    number="4" 
+                    title="Blink Naturally" 
+                    desc="Blink your eyes naturally during capture for liveness verification" 
+                  />
                 </div>
              </div>
            )}
@@ -549,6 +628,7 @@ const VoterAuthentication: React.FC<{ onAuthSuccess: (voter: Voter) => void }> =
       </div>
 
       <canvas ref={canvasRef} className="hidden" />
+      
       <style>{`
         @keyframes scan { 0% { top: 10% } 50% { top: 90% } 100% { top: 10% } }
         @keyframes progress { from { width: 0% } to { width: 100% } }

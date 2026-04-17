@@ -1,22 +1,44 @@
-# Flask Web Framework
-flask==3.0.0
-flask-cors==4.0.0
-werkzeug==3.0.1
+# ================================
+# SmartVote Backend Requirements
+# Python 3.11 required
+# ================================
+
+# Web Framework
+flask==3.1.3
+flask-cors==6.0.2
+werkzeug==3.1.8
+
+# Rate Limiting
+Flask-Limiter==4.1.1
+
+# Email
+Flask-Mail==0.10.0
+
+# HTTP Requests (Fast2SMS OTP API)
+requests==2.33.1
 
 # Database
-mysql-connector-python==8.2.0
+mysql-connector-python==9.6.0
 
 # Blockchain
-web3==6.11.3
+web3==7.15.0
+py-solc-x==2.0.5
 
-# AI/ML - Face Recognition
-deepface==0.0.79
-opencv-python==4.8.1.78
-numpy==1.24.3
-tf-keras==2.16.0
+# Environment Variables
+python-dotenv==1.2.2
 
-# Utilities
-python-dotenv==1.0.0
+# PDF Generation (receipts + EPIC voter card)
+reportlab==4.4.10
 
-# Optional - Smart Contract Compilation (if needed)
-py-solc-x==2.0.2
+# QR Code Generation
+qrcode==8.2
+pillow==12.2.0
+
+# Image Processing (liveness detection)
+opencv-python==4.13.0.92
+numpy==2.4.4
+
+# AI / Face Recognition
+deepface==0.0.99
+tensorflow==2.21.0
+tf_keras==2.21.0

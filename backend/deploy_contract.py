@@ -13,7 +13,7 @@ from solcx import compile_source, install_solc
 # Load environment variables
 load_dotenv()
 
-GANACHE_URL = os.getenv("GANACHE_URL", "http://127.0.0.1:8545")
+GANACHE_URL = os.getenv("GANACHE_URL", "http://127.0.0.1:7545")
 
 print("=" * 60)
 print("🚀 DEPLOYING VOTING CONTRACT TO GANACHE")
@@ -25,7 +25,7 @@ w3 = Web3(Web3.HTTPProvider(GANACHE_URL))
 
 if not w3.is_connected():
     print("   ❌ Failed to connect to Ganache")
-    print("   Make sure Ganache is running: ganache --port 8545")
+    print("   Make sure Ganache is running: ganache --port 7545")
     exit(1)
 
 print("   ✅ Connected successfully!")
@@ -125,6 +125,21 @@ try:
             f.write(env_content)
         
         print(f"   ✅ .env updated with new contract address")
+        
+        # Save ABI to JSON file
+        print(f"\n6️⃣.5 Saving contract ABI...")
+        abi_path = os.path.join(os.path.dirname(__file__), '..', 'contracts', 'VotingContract.json')
+        abi_data = {
+            'abi': abi,
+            'address': contract_address,
+            'deployer': deployer,
+            'timestamp': str(tx_receipt['blockNumber'])
+        }
+        
+        with open(abi_path, 'w') as f:
+            json.dump(abi_data, f, indent=2)
+        
+        print(f"   ✅ ABI saved to contracts/VotingContract.json")
         
         # Verify deployment
         print(f"\n7️⃣ Verifying deployment...")

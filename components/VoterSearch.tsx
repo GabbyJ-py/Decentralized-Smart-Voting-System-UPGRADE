@@ -162,10 +162,19 @@ const VoterSearch: React.FC<{ onRegisterClick?: () => void }> = ({ onRegisterCli
               </div>
               <button 
                 type="submit" 
-                disabled={!searchQuery}
+                disabled={!searchQuery || isSearching}
                 className="bg-[#053c6d] text-white px-10 py-5 rounded-2xl font-bold text-lg hover:bg-[#085091] transition shadow-xl shadow-blue-900/10 flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                <Search size={22} /> Search Registry
+                {isSearching ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    <Search size={22} /> Search Registry
+                  </>
+                )}
               </button>
             </div>
             {error && (
@@ -259,4 +268,4 @@ const VoterSearch: React.FC<{ onRegisterClick?: () => void }> = ({ onRegisterCli
   );
 };
 
-export default VoterSearch;
+export default VoterSearch
