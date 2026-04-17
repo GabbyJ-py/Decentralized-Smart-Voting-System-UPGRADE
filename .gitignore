@@ -137,3 +137,8 @@ coverage/
 *.bak
 *.tmp
 *.temp
+
+# Allow screenshots (override)
+!screenshots/
+!screenshots/*.png
+!screenshots/*.jpg
